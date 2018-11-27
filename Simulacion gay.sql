@@ -19,6 +19,7 @@ as begin
   DECLARE @idTipoMov int
   DECLARE @numeroDeVierneses int
   DECLARE @horas int
+  DECLARE @tiempoNormal int
   DECLARE @fecha date
   DECLARE @idPlanillaMensual bigint
   DECLARE @idPlanillaSemanal bigint
@@ -46,12 +47,12 @@ as begin
   ---- Tablas Variables
   DECLARE @EmpleadoAux TABLE(sec int IDENTITY (1, 1), valorDocId numeric(12), Nombre varchar(50), idPuesto int)
   DECLARE @AsistenciaAux TABLE(sec int IDENTITY (1, 1), Fecha date, IdObrero int, IdTipoJornada int, HoraEntrada time, HoraSalida time)
-  DECLARE @DeduccionAux TABLE(sec int IDENTITY(1,1), DocId numeric(12), idTipoDeduccion int, Valor money)
-  DECLARE @Bono TABLE(sec int IDENTITY(1,1), DocId numeric(12), Monto money)
+  DECLARE @DeduccionAux TABLE(sec int IDENTITY (1, 1), DocId numeric(12), idTipoDeduccion int, Valor money)
+  DECLARE @Bono TABLE(sec int IDENTITY (1, 1), DocId numeric(12), Monto money)
   DECLARE @tabla_fechas TABLE(sec int IDENTITY (1, 1), fecha date)
   DECLARE @cierrePlanillaSemAux TABLE(sec int IDENTITY (1, 1), idMensual bigint, idSemanal bigint, monto money, tipo_mov int, fecha date)
 
-  DECLARE @IncapacidadAux TABLE(sec int IDENTITY(1,1), DocId numeric(12), idTipoJornada int)
+  DECLARE @IncapacidadAux TABLE(sec int IDENTITY (1, 1), DocId numeric(12), idTipoJornada int)
   --                             SaldoMinimoCorte money, FechaCorte date, QopManual int, QopAT int)
 
   INSERT @tabla_fechas (fecha)
@@ -66,7 +67,7 @@ as begin
   WHILE @fecha_inicio <= @fecha_fin
     BEGIN
 
-      set @sabadoDePlanilla = DATEADD(DAY, DATEDIFF(DAY, 5, @fecha_inicio) /7 * 7, 5)
+      set @sabadoDePlanilla = DATEADD(DAY, DATEDIFF(DAY, 5, @fecha_inicio) / 7 * 7, 5)
       set @viernesDePlanilla = DATEADD(d, 6 - DATEPART(dw, @fecha_inicio), @fecha_inicio)
       set @numeroDiaEnSemana = datepart(dw, @fecha_inicio)
 
@@ -123,8 +124,9 @@ as begin
           FROM @AsistenciaAux C
           WHERE sec = @low1
 
-          SELECT @salarioPorHora = TC.SALARIO
+          SELECT @salarioPorHora = TC.SALARIO, @tiempoNormal = datediff(hour, J.HORA_INICIO, J.HORA_FIN)
           FROM SALARIOXHORA TC
+                 Inner join TIPO_JORNADA J on TC.ID_TIPO_JORNADA = J.ID
           WHERE TC.ID_TIPO_JORNADA = @idTipoJornada
             and TC.ID_PUESTO = @valorDocId
 
@@ -132,12 +134,14 @@ as begin
           INSERT INTO ASISTENCIA (FECHA, ID_OBRERO, ID_TIPO_JORNADA, HORA_ENTRADA, HORA_SALIDA)
           SELECT @fecha_inicio, @valorDocId, @idTipoJornada, @horaEntrada, @horaSalida
 
+
           set @horas = datediff(hour, @horaEntrada, @horaSalida)
 
+
           IF (@horas < 0)
-            begin
-              set @horas = 24 + @horas
-            end
+            set @horas = 24 + @horas
+          IF (@tiempoNormal < 0)
+            set @tiempoNormal = 24 + @tiempoNormal
 
           /*
            * Agregar dinero ganado
@@ -156,27 +160,38 @@ as begin
 
           UPDATE PLANILLA_SEMANA
           SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas)
-                OUTPUT @idPlanillaSemanal = inserted.ID
-          WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual and
-            FECHA = @sabadoDePlanilla
+              OUTPUT @idPlanillaSemanal = inserted.ID
+          WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual
+            and FECHA = @sabadoDePlanilla
           IF @@ROWCOUNT = 0
             INSERT INTO PLANILLA_SEMANA (ID_PLANILLA_MENSUAL, "SALARIO_BRUTO", "SALARIO_NETO", FECHA)
                 OUTPUT @idPlanillaSemanal = inserted.ID
             values (@valorDocId, (@salarioPorHora * @horas), 0, @sabadoDePlanilla)
 
           --Agregar movimiento
-          INSERT INTO MOVIMIENTO("ID_PLANILLA_SEMANAL",
-                                 "ID_OBRERO",
-                                 "FECHA",
-                                 "MONTO",
-                                 "TIPO_MOVIMIENTO")
+          INSERT INTO MOVIMIENTO ("ID_PLANILLA_SEMANAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
           VALUES (@idPlanillaSemanal,
                   @valorDocId,
                   @fecha_inicio,
                   (@salarioPorHora * @horas),
                   1) --3 porque es el valor del id de movimiento por incapacidad en la tabla respectiva
 
+          --Se agregan horas extras
 
+          Set @horas = @horas - @tiempoNormal
+          If (@horas > 0)
+            begin
+              Update PLANILLA_SEMANA
+              set SALARIO_NETO = SALARIO_NETO + (@horas * @salarioPorHora * 1.5)
+              where ID = @idPlanillaSemanal
+              INSERT INTO MOVIMIENTO ("ID_PLANILLA_SEMANAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
+              VALUES (@idPlanillaSemanal,
+                      @valorDocId,
+                      @fecha_inicio,
+                      (@salarioPorHora * @horas * 1.5),
+                      2)
+
+            end
           SET @low1 = @low1 + 1
         END
 
@@ -199,28 +214,19 @@ as begin
       SELECT @low1 = min(sec), @high1 = max(sec) FROM @DeduccionAux
       WHILE @low1 <= @high1
         BEGIN
-          SELECT @valorDocId = M.DocId,
-                 @idTipoDeduccion = M.idTipoDeduccion,
-                 @valor = M.Valor
+          SELECT @valorDocId = M.DocId, @idTipoDeduccion = M.idTipoDeduccion, @valor = M.Valor
           FROM @DeduccionAux M
           WHERE sec = @low1
 
-          SELECT @idPlanillaMensual=MENSUAL.ID
+          SELECT @idPlanillaMensual = MENSUAL.ID
           FROM PLANILLA_SEMANA P
-            inner join PLANILLA_MENSUAL MENSUAL on P.ID_PLANILLA_MENSUAL = MENSUAL.ID
-          WHERE MENSUAL.ID_OBRERO=@valorDocId and P.FECHA=@sabadoDePlanilla
+                 inner join PLANILLA_MENSUAL MENSUAL on P.ID_PLANILLA_MENSUAL = MENSUAL.ID
+          WHERE MENSUAL.ID_OBRERO = @valorDocId
+            and P.FECHA = @sabadoDePlanilla
 
 
-          INSERT INTO MOVIMIENTO("ID_PLANILLA_MENSUAL",
-                                 "ID_OBRERO",
-                                 "FECHA",
-                                 "MONTO",
-                                 "TIPO_MOVIMIENTO")
-          VALUES (@idPlanillaMensual,
-                  @valorDocId,
-                  @fecha_inicio,
-                  @valor,
-                  @idTipoDeduccion + 5)
+          INSERT INTO MOVIMIENTO ("ID_PLANILLA_MENSUAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
+          VALUES (@idPlanillaMensual, @valorDocId, @fecha_inicio, @valor, @idTipoDeduccion + 5)
 
           --IF (@idTipoDeduccion = 1 OR @idTipoDeduccion= 2)
           --  BEGIN
@@ -251,8 +257,7 @@ as begin
        Cargar bonos
        */
       INSERT @Bono (DocId, Monto)
-      SELECT Child.value('(@DocId)[1]', 'numeric(12)'),
-             Child.value('(@valor)[1]', 'money')
+      SELECT Child.value('(@DocId)[1]', 'numeric(12)'), Child.value('(@valor)[1]', 'money')
       FROM @XML.nodes('dataset/FechaOperacion/Bono') AS N (Child)
       WHERE @fecha_inicio = Child.value('../@Fecha', 'date')
 
@@ -263,30 +268,23 @@ as begin
       SELECT @low1 = min(sec), @high1 = max(sec) FROM @Bono
       WHILE @low1 <= @high1
         BEGIN
-          SELECT @valorDocId = M.DocId,
-                 @valor = M.Monto
-          FROM @Bono M
-          WHERE sec = @low1
+          SELECT @valorDocId = M.DocId, @valor = M.Monto FROM @Bono M WHERE sec = @low1
 
-          SELECT @idPlanillaSemanal=P.ID
+          SELECT @idPlanillaSemanal = P.ID
           FROM PLANILLA_SEMANA P
-            inner join PLANILLA_MENSUAL MENSUAL on P.ID_PLANILLA_MENSUAL = MENSUAL.ID
-          WHERE MENSUAL.ID_OBRERO=@valorDocId and P.FECHA=@sabadoDePlanilla
+                 inner join PLANILLA_MENSUAL MENSUAL on P.ID_PLANILLA_MENSUAL = MENSUAL.ID
+          WHERE MENSUAL.ID_OBRERO = @valorDocId
+            and P.FECHA = @sabadoDePlanilla
 
 
-          INSERT INTO MOVIMIENTO("ID_PLANILLA_SEMANAL",
-                                 "ID_OBRERO",
-                                 "FECHA",
-                                 "MONTO",
-                                 "TIPO_MOVIMIENTO")
+          INSERT INTO MOVIMIENTO ("ID_PLANILLA_SEMANAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
           VALUES (@idPlanillaSemanal,
                   @valorDocId,
                   @fecha_inicio,
                   @valor,
                   4) --4 porque es el valor del id de movimiento tipo bono en la tabla respectiva
 
-          UPDATE PLANILLA_SEMANA SET SALARIO_NETO =  SALARIO_NETO + @valor
-          WHERE ID = @idPlanillaSemanal
+          UPDATE PLANILLA_SEMANA SET SALARIO_NETO = SALARIO_NETO + @valor WHERE ID = @idPlanillaSemanal
 
         END
 
@@ -295,8 +293,7 @@ as begin
        Cargar incapacidades en tabla auxiliar
        */
       INSERT @IncapacidadAux (DocId, idTipoJornada)
-      SELECT Child.value('(@DocId)[1]', 'numeric(12)'),
-             Child.value('(@idTipoJornada)[1]', 'int')
+      SELECT Child.value('(@DocId)[1]', 'numeric(12)'), Child.value('(@idTipoJornada)[1]', 'int')
       FROM @XML.nodes('dataset/FechaOperacion/Incapacidad') AS N (Child)
       WHERE @fecha_inicio = Child.value('../@Fecha', 'date')
 
@@ -308,12 +305,10 @@ as begin
       SELECT @low1 = min(sec), @high1 = max(sec) FROM @IncapacidadAux
       WHILE @low1 <= @high1
         BEGIN
-          SELECT @valorDocId = C.DocId, @idTipoJornada = C.idTipoJornada
-          FROM @IncapacidadAux C
-          WHERE C.sec = @low1
+          SELECT @valorDocId = C.DocId, @idTipoJornada = C.idTipoJornada FROM @IncapacidadAux C WHERE C.sec = @low1
 
           --REgistro la incapacidad
-          INSERT INTO INCAPACIDAD(ID_OBRERO, ID_TIPO_JORNADA, FECHA)
+          INSERT INTO INCAPACIDAD (ID_OBRERO, ID_TIPO_JORNADA, FECHA)
           VALUES (@valorDocId, @idTipoJornada, @fecha_inicio)
           SET @low1 = @low1 + 1
 
@@ -324,9 +319,10 @@ as begin
           --WHERE MENSUAL.ID_OBRERO=@valorDocId and P.FECHA=@sabadoDePlanilla
 
 
-          Select @salarioPorHora=sxh.SALARIO*(0.6)
-          from SALARIOXHORA sxh inner join OBRERO o on sxh.ID_PUESTO = o.ID_PUESTO
-          where sxh.ID_TIPO_JORNADA=@idTipoJornada
+          Select @salarioPorHora = sxh.SALARIO * (0.6)
+          from SALARIOXHORA sxh
+                 inner join OBRERO o on sxh.ID_PUESTO = o.ID_PUESTO
+          where sxh.ID_TIPO_JORNADA = @idTipoJornada
 
 
           IF (@idTipoJornada = 1)
@@ -355,24 +351,19 @@ as begin
           UPDATE PLANILLA_SEMANA
           SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas)
               OUTPUT @idPlanillaSemanal = inserted.ID
-          WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual and
-            FECHA = @sabadoDePlanilla
+          WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual
+            and FECHA = @sabadoDePlanilla
           IF @@ROWCOUNT = 0
             INSERT INTO PLANILLA_SEMANA (ID_PLANILLA_MENSUAL, "SALARIO_BRUTO", "SALARIO_NETO", FECHA)
                 OUTPUT @idPlanillaSemanal = inserted.ID
             values (@valorDocId, (@salarioPorHora * @horas), 0, @sabadoDePlanilla)
 
-          INSERT INTO MOVIMIENTO("ID_PLANILLA_SEMANAL",
-                                 "ID_OBRERO",
-                                 "FECHA",
-                                 "MONTO",
-                                 "TIPO_MOVIMIENTO")
+          INSERT INTO MOVIMIENTO ("ID_PLANILLA_SEMANAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
           VALUES (@idPlanillaSemanal,
                   @valorDocId,
                   @fecha_inicio,
                   (@salarioPorHora * @horas),
                   3) --3 porque es el valor del id de movimiento por incapacidad en la tabla respectiva
-
 
 
         END
@@ -383,63 +374,66 @@ as begin
       --------------------------------------------------------------
 
       --Cierre
-      IF (@numeroDiaEnSemana=6) begin --Donde 6 es Viernes
-        IF (@numeroDiaEnSemana =
-            DATEADD(
-                DY,
-                DATEDIFF(
-                    DY,
-                    '1900-01-05',
-                    DATEADD(
-                        MM,
-                        DATEDIFF(
-                            MM,0,@fecha_inicio),30))/7*7,'1900-01-05')) --Es el ultimo viernes? Heh
-        begin --Cierre mensual
+      IF (@numeroDiaEnSemana = 6)
+        begin
+          --Donde 6 es Viernes
+          IF (@numeroDiaEnSemana =
+              DATEADD(
+                  DY,
+                  DATEDIFF(
+                      DY,
+                      '1900-01-05',
+                      DATEADD(
+                          MM,
+                          DATEDIFF(
+                              MM, 0, @fecha_inicio), 30)) / 7 * 7, '1900-01-05')) --Es el ultimo viernes? Heh
+            begin
+              --Cierre mensual
 
 
-        end
-        else begin --Cierre semana
-          insert into @cierrePlanillaSemAux (idMensual, idSemanal, monto, tipo_mov, fecha)
-          SELECT PS.ID, PS.ID_PLANILLA_MENSUAL, MOV.MONTO, MOV.TIPO_MOVIMIENTO, MOV.FECHA
-          From PLANILLA_SEMANA PS
-                 inner join PLANILLA_MENSUAL MENSUAL2 on PS.ID_PLANILLA_MENSUAL = MENSUAL2.ID
-                 inner join MOVIMIENTO MOV on PS.ID = MOV.ID_PLANILLA_MENSUAL
-          where PS.FECHA=@sabadoDePlanilla --and @idTipoMov=6 or @idTipoMov=7
+            end
+          else begin
+            --Cierre semana
+            insert into @cierrePlanillaSemAux (idMensual, idSemanal, monto, tipo_mov, fecha)
+            SELECT PS.ID, PS.ID_PLANILLA_MENSUAL, MOV.MONTO, MOV.TIPO_MOVIMIENTO, MOV.FECHA
+            From PLANILLA_SEMANA PS
+                   inner join PLANILLA_MENSUAL MENSUAL2 on PS.ID_PLANILLA_MENSUAL = MENSUAL2.ID
+                   inner join MOVIMIENTO MOV on PS.ID = MOV.ID_PLANILLA_MENSUAL
+            where PS.FECHA = @sabadoDePlanilla --and @idTipoMov=6 or @idTipoMov=7
 
-          SELECT @low1 = min(sec), @high1 = max(sec) FROM @cierrePlanillaSemAux
-          while @low1 <= @high1
-          BEGIN
-            select @idPlanillaSemanal=c.idSemanal, @valor=C.monto, @idTipoMov=C.tipo_mov, @fecha=C.fecha
-            from @cierrePlanillaSemAux C
-            where C.sec=@low1
-            --Agregar salario neto
-            update PLANILLA_SEMANA
-            set SALARIO_NETO=SALARIO_NETO+SALARIO_BRUTO
-            where ID = @idPlanillaSemanal
-
-            --Procesar deducciones porcentuales
-            IF (@idTipoMov=6 or @idTipoMov=7)
-              begin
-                update PLANILLA_SEMANA
-                set SALARIO_NETO=SALARIO_NETO-(SALARIO_BRUTO*(@valor/100))
-                where ID=@idPlanillaSemanal
-              end
-            ELSE IF (@idTipoMov=8 or @idTipoMov=9) --procesar deducciones "fijas"
+            SELECT @low1 = min(sec), @high1 = max(sec) FROM @cierrePlanillaSemAux
+            while @low1 <= @high1
               BEGIN
-                set @numeroDeVierneses=datediff(day, -3,
-                                          DATEADD (dd, -1, DATEADD(mm, DATEDIFF(mm, 0, GETDATE()) + 1, 0)) --ultimo dia
-                                 )/7-datediff(day, -2,
-                                              @fecha) --primer dia
-                                     /7
+                select @idPlanillaSemanal = c.idSemanal, @valor = C.monto, @idTipoMov = C.tipo_mov, @fecha = C.fecha
+                from @cierrePlanillaSemAux C
+                where C.sec = @low1
+                --Agregar salario neto
+                update PLANILLA_SEMANA set SALARIO_NETO = SALARIO_NETO + SALARIO_BRUTO where ID = @idPlanillaSemanal
 
-                update PLANILLA_SEMANA
-                set SALARIO_NETO=SALARIO_NETO-(@valor/@numeroDeVierneses) -- Todo: fix this. Baja toda la deduccion en una semana, coz reasons
-                where ID=@idPlanillaSemanal
+                --Procesar deducciones porcentuales
+                IF (@idTipoMov = 6 or @idTipoMov = 7)
+                  begin
+                    update PLANILLA_SEMANA
+                    set SALARIO_NETO = SALARIO_NETO - (SALARIO_BRUTO * (@valor / 100))
+                    where ID = @idPlanillaSemanal
+                  end
+                ELSE IF (@idTipoMov = 8 or @idTipoMov = 9) --procesar deducciones "fijas"
+                  BEGIN
+                    set @numeroDeVierneses = datediff(day, -3,
+                                                      DATEADD(dd, -1, DATEADD(mm, DATEDIFF(mm, 0, GETDATE()) + 1, 0))
+                                                      --ultimo dia
+                                             ) / 7 - datediff(day, -2,
+                                                              @fecha) --primer dia
+                                                     / 7
+
+                    update PLANILLA_SEMANA
+                    set SALARIO_NETO = SALARIO_NETO - (@valor / @numeroDeVierneses) -- Todo: fix this. Baja toda la deduccion en una semana, coz reasons
+                    where ID = @idPlanillaSemanal
+                  end
               end
-          end
 
+          end
         end
-      end
 
 
       SET @fecha_inicio = DATEADD(DD, 1, @fecha_inicio)
