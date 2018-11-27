@@ -34,6 +34,7 @@ as begin
   DECLARE @horaEntrada time
   DECLARE @horaSalida time
   DECLARE @salarioPorHora money
+  DECLARE @Feriado int
   --DECLARE @QMaxATM1 int
   --DECLARE @QMaxManual1 int
   --DECLARE @QMaxATM2 int
@@ -54,7 +55,8 @@ as begin
 
   DECLARE @IncapacidadAux TABLE(sec int IDENTITY (1, 1), DocId numeric(12), idTipoJornada int)
   --                             SaldoMinimoCorte money, FechaCorte date, QopManual int, QopAT int)
-
+  
+  
   INSERT @tabla_fechas (fecha)
   SELECT CONVERT(VARCHAR(8), Child.value('(@fecha)[1]', 'date'), 3)
   FROM @XML.nodes('dataset/fechaOperacion') AS N (Child)
