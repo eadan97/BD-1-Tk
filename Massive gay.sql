@@ -1,5 +1,5 @@
 use planilla
-create procedure Simulacion
+create procedure SimulacionM
 as begin
   DECLARE @XML XML
   SET @XML = (SELECT * FROM OPENROWSET(BULK '/home/datos/FechaOperacion V2.xml', SINGLE_BLOB) AS BasicData)
@@ -157,8 +157,10 @@ as begin
       SELECT Child.value('(@DocId)[1]', 'numeric(12)'),
              Child.value('(@idTipoDeduccion)[1]', 'int'),
              Child.value('(@valor)[1]', 'money')
-      FROM @XML.nodes('dataset/FechaOperacion/NuevaDeuccion') AS N (Child)
+      FROM @XML.nodes('dataset/FechaOperacion/NuevaDeduccion') AS N (Child)
       WHERE @fecha_inicio = Child.value('../@Fecha', 'date')
+      
+	   
 
       /*
        * Guardar deducciones en la base de datos
@@ -245,17 +247,15 @@ as begin
       /*
        Cargar incapacidades en tabla auxiliar
        */
-      INSERT @IncapacidadAux (DocId, idTipoJornada)
-      SELECT Child.value('(@DocId)[1]', 'numeric(12)'), Child.value('(@idTipoJornada)[1]', 'int')
+	   INSERT INTO INCAPACIDAD (ID_OBRERO, ID_TIPO_JORNADA, FECHA)
+          SELECT Child.value('(@DocId)[1]', 'numeric(12)'), Child.value('(@idTipoJornada)[1]', 'int'), Child.value('../@Fecha', 'date')
       FROM @XML.nodes('dataset/FechaOperacion/Incapacidad') AS N (Child)
-      WHERE @fecha_inicio = Child.value('../@Fecha', 'date')
-
 
       /*
       Cargar incapacidades en la base de datos
       Si se guardan los movimientos y se agrega en la planilla
        */
-      SELECT @low1 = min(sec), @high1 = max(sec) FROM @IncapacidadAux
+      /*SELECT @low1 = min(sec), @high1 = max(sec) FROM @IncapacidadAux
       WHILE @low1 <= @high1
         BEGIN
           SELECT @valorDocId = C.DocId, @idTipoJornada = C.idTipoJornada FROM @IncapacidadAux C WHERE C.sec = @low1
@@ -271,7 +271,7 @@ as begin
           --  inner join PLANILLA_MENSUAL MENSUAL on P.ID_PLANILLA_MENSUAL = MENSUAL.ID
           --WHERE MENSUAL.ID_OBRERO=@valorDocId and P.FECHA=@sabadoDePlanilla
 
-
+		  */
           Select @salarioPorHora = sxh.SALARIO * (0.6)
           from SALARIOXHORA sxh
                  inner join OBRERO o on sxh.ID_PUESTO = o.ID_PUESTO

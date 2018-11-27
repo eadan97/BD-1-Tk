@@ -1,5 +1,5 @@
 use planilla
-create procedure Simulacion
+create procedure SimulacionI
 as begin
   DECLARE @XML XML
   SET @XML = (SELECT * FROM OPENROWSET(BULK '/home/datos/FechaOperacion V2.xml', SINGLE_BLOB) AS BasicData)
