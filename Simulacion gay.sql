@@ -34,6 +34,7 @@ as begin
   DECLARE @horaEntrada time
   DECLARE @horaSalida time
   DECLARE @salarioPorHora money
+  DECLARE @Feriado int
   --DECLARE @QMaxATM1 int
   --DECLARE @QMaxManual1 int
   --DECLARE @QMaxATM2 int
@@ -54,7 +55,8 @@ as begin
 
   DECLARE @IncapacidadAux TABLE(sec int IDENTITY (1, 1), DocId numeric(12), idTipoJornada int)
   --                             SaldoMinimoCorte money, FechaCorte date, QopManual int, QopAT int)
-
+  
+  
   INSERT @tabla_fechas (fecha)
   SELECT CONVERT(VARCHAR(8), Child.value('(@fecha)[1]', 'date'), 3)
   FROM @XML.nodes('dataset/fechaOperacion') AS N (Child)
@@ -192,6 +194,28 @@ as begin
                       2)
 
             end
+
+			--Agrega extra por feriado o si es domingo
+			Select count(Fecha) as @Feriado from Feriado where month(@fecha_inicio)=month(Fecha) and day(@fecha_inicio)=day(Fecha) or weekday(@fecha_inicio)=6
+			if(@Feriado > 0)
+			begin
+				UPDATE PLANILLA_SEMANA
+				SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas) --Se agrega el doble porque se trabaja el dia feriado
+                OUTPUT @idPlanillaSemanal = inserted.ID
+				WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual
+
+				--Agregar movimiento
+				INSERT INTO MOVIMIENTO("ID_PLANILLA_SEMANAL",
+                                 "ID_OBRERO",
+                                 "FECHA",
+                                 "MONTO",
+                                 "TIPO_MOVIMIENTO")
+				VALUES (@idPlanillaSemanal,
+                  @valorDocId,
+                  @fecha_inicio,
+                  (@salarioPorHora * @horas),
+                  2) --2 porque es el valor del id de movimiento por jornada extraordinaria
+			end
           SET @low1 = @low1 + 1
         END
 
