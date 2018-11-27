@@ -192,6 +192,28 @@ as begin
                       2)
 
             end
+
+			--Agrega extra por feriado o si es domingo
+			Select count(Fecha) as @Feriado from Feriado where month(@fecha_inicio)=month(Fecha) and day(@fecha_inicio)=day(Fecha) or weekday(@fecha_inicio)='Sunday'
+			if(0<@Feriado)
+			begin
+				UPDATE PLANILLA_SEMANA
+				SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas) --Se agrega el doble porque se trabaja el dia feriado
+                OUTPUT @idPlanillaSemanal = inserted.ID
+				WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual
+
+				--Agregar movimiento
+				INSERT INTO MOVIMIENTO("ID_PLANILLA_SEMANAL",
+                                 "ID_OBRERO",
+                                 "FECHA",
+                                 "MONTO",
+                                 "TIPO_MOVIMIENTO")
+				VALUES (@idPlanillaSemanal,
+                  @valorDocId,
+                  @fecha_inicio,
+                  (@salarioPorHora * @horas),
+                  2) --2 porque es el valor del id de movimiento por jornada extraordinaria
+			end
           SET @low1 = @low1 + 1
         END
 
