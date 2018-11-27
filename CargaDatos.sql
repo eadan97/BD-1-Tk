@@ -22,16 +22,16 @@ as begin
   INSERT SalarioXHora (ID_Tipo_Jornada,ID_Puesto,Salario)
 	        SELECT 
              Child.value('(@idPuesto)[1]', 'int'),
-			 Child.value('(@idTipoJornada)[2]', 'int'),
-			 Child.value('(@valorHora)[2]', 'Money')
+			 Child.value('(@idTipoJornada)[1]', 'int'),
+			 Child.value('(@valorHora)[1]', 'Money')
       FROM @XML.nodes('dataset/SalarioxHora') AS N (Child)
 
   SET @XML = (SELECT * FROM OPENROWSET(BULK '/home/datos/TipoJornadas.xml', SINGLE_BLOB) AS BasicData)
     INSERT TipoJornada (Nombre,Hora_Inicio,Hora_Fin)
 	        SELECT 
              Child.value('(@nombre)[1]', 'Varchar(15)')			 
-			 Child.value('(@HoraInicio)[2]', 'Time')	
-			 Child.value('(@HoraFin)[3]', 'Time')	
+			 Child.value('(@HoraInicio)[1]', 'Time')	
+			 Child.value('(@HoraFin)[1]', 'Time')	
       FROM @XML.nodes('dataset/TipoJornadas') AS N (Child)
 
 --SET @XML = (SELECT * FROM OPENROWSET(BULK '/home/datos/TipoDeduccion.xml', SINGLE_BLOB) AS BasicData) --Tiene lo mismo que TipoMovimiento (?)
