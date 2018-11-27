@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<dataset>
+	<Feriados id="1" NombreFeriado="Anexión del Partido de Nicoya a Costa Rica" Fecha="25/7/2018"/>
+	<Feriados id="2" NombreFeriado="Dia de la Madre" Fecha="15/8/2018"/>
+</dataset>
