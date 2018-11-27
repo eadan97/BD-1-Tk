@@ -244,6 +244,8 @@ as begin
         END
 
 
+
+		--Se intenta cambio de incapacidad a masivo
       /*
        Cargar incapacidades en tabla auxiliar
        */
@@ -272,6 +274,8 @@ as begin
           --WHERE MENSUAL.ID_OBRERO=@valorDocId and P.FECHA=@sabadoDePlanilla
 
 		  */
+
+		  /*
           Select @salarioPorHora = sxh.SALARIO * (0.6)
           from SALARIOXHORA sxh
                  inner join OBRERO o on sxh.ID_PUESTO = o.ID_PUESTO
@@ -289,12 +293,17 @@ as begin
           ELSE begin
             set @horas = 11
           end
+		  */
+
 
           UPDATE PLANILLA_MENSUAL
-          SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas)
+          SET SALARIO_BRUTO = SALARIO_BRUTO + (select sxh.SALARIO * (0.6)
+											  from SALARIOXHORA sxh
+													 inner join OBRERO o on sxh.ID_PUESTO = o.ID_PUESTO
+													 inner join Incapacidad I on sxh.ID_TIPO_JORNADA = I.ID_Tipo_Jornada)
+												Where ID_Obrero=o.ID) * /*Usar Case when para horas*/--(@salarioPorHora * @horas)
               OUTPUT @idPlanillaMensual = inserted.ID
-          WHERE ID_OBRERO = @valorDocId
-            and MES = MONTH(@sabadoDePlanilla)
+          WHERE MES = MONTH(@sabadoDePlanilla)
             and ANNO = YEAR(@sabadoDePlanilla)
           IF @@ROWCOUNT = 0
             INSERT INTO PLANILLA_MENSUAL ("ID_OBRERO", "SALARIO_BRUTO", "SALARIO_NETO", "MES", "ANNO")
@@ -319,7 +328,7 @@ as begin
                   3) --3 porque es el valor del id de movimiento por incapacidad en la tabla respectiva
 
 
-        END
+        --END
 
       --------------------------------------------------------------
       --------------------------------------------------------------
