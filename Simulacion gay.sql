@@ -59,7 +59,7 @@ as begin
   
   INSERT @tabla_fechas (fecha)
   SELECT CONVERT(VARCHAR(8), Child.value('(@fecha)[1]', 'date'), 3)
-  FROM @XML.nodes('dataset/fechaOperacion') AS N (Child)
+  FROM @XML.nodes('dataset/FechaOperacion') AS N (Child)
 
   SELECT @fecha_inicio = min(fecha), @fecha_fin = max(fecha) FROM @tabla_fechas
   --SET @fechaCorte = DATEADD(M,1, @fecha_inicio)
@@ -228,7 +228,7 @@ as begin
       SELECT Child.value('(@DocId)[1]', 'numeric(12)'),
              Child.value('(@idTipoDeduccion)[1]', 'int'),
              Child.value('(@valor)[1]', 'money')
-      FROM @XML.nodes('dataset/FechaOperacion/NuevaDeuccion') AS N (Child)
+      FROM @XML.nodes('dataset/FechaOperacion/NuevaDeduccion') AS N (Child)
       WHERE @fecha_inicio = Child.value('../@Fecha', 'date')
 
       /*
@@ -400,10 +400,26 @@ as begin
       --Cierre
       IF (@numeroDiaEnSemana = 6)
         begin
+          --Donde 6 es Viernes
+          IF (@numeroDiaEnSemana =
+              DATEADD(
+                  DY,
+                  DATEDIFF(
+                      DY,
+                      '1900-01-05',
+                      DATEADD(
+                          MM,
+                          DATEDIFF(
+                              MM, 0, @fecha_inicio), 30)) / 7 * 7, '1900-01-05')) --Es el ultimo viernes? Heh
+            begin
+              --Cierre mensual
 
-          --Cierre semana
+
+            end
+          else begin
+            --Cierre semana
             insert into @cierrePlanillaSemAux (idMensual, idSemanal, monto, tipo_mov, fecha)
-            SELECT PS.ID_PLANILLA_MENSUAL, PS.ID, MOV.MONTO, MOV.TIPO_MOVIMIENTO, MOV.FECHA
+            SELECT PS.ID, PS.ID_PLANILLA_MENSUAL, MOV.MONTO, MOV.TIPO_MOVIMIENTO, MOV.FECHA
             From PLANILLA_SEMANA PS
                    inner join PLANILLA_MENSUAL MENSUAL2 on PS.ID_PLANILLA_MENSUAL = MENSUAL2.ID
                    inner join MOVIMIENTO MOV on PS.ID = MOV.ID_PLANILLA_MENSUAL
@@ -440,39 +456,7 @@ as begin
                   end
               end
 
-
-          IF (@numeroDiaEnSemana =
-              DATEADD(
-                  DY,
-                  DATEDIFF(
-                      DY,
-                      '1900-01-05',
-                      DATEADD(
-                          MM,
-                          DATEDIFF(
-                              MM, 0, @fecha_inicio), 30)) / 7 * 7, '1900-01-05')) --Es el ultimo viernes? Heh
-            begin
-              --Cierre mensual
-              delete from @cierrePlanillaSemAux
-              insert into @cierrePlanillaSemAux (idMensual, idSemanal, monto)
-              SELECT PS.ID_PLANILLA_MENSUAL, PS.ID, PS.SALARIO_NETO
-              From PLANILLA_SEMANA PS
-                     inner join PLANILLA_MENSUAL MENSUAL2 on PS.ID_PLANILLA_MENSUAL = MENSUAL2.ID
-              where MENSUAL2.MES = MONTH(@viernesDePlanilla)
-              and MENSUAL2.ANNO = YEAR(@viernesDePlanilla)
-
-              SELECT @low1 = min(sec), @high1 = max(sec) FROM @cierrePlanillaSemAux
-              while @low1 <= @high1
-              BEGIN
-                select @idPlanillaMensual = c.idMensual, @valor = C.monto
-                from @cierrePlanillaSemAux C
-                where C.sec = @low1
-                --Agregar salario neto
-                update PLANILLA_MENSUAL
-                set SALARIO_NETO = SALARIO_NETO + @valor where ID = @idPlanillaMensual
-              end
-
-            end
+          end
         end
 
 
