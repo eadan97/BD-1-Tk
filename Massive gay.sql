@@ -81,9 +81,6 @@ as begin
       FROM @XML.nodes('dataset/FechaOperacion/NuevoEmpleado') AS N (Child)
       WHERE @fecha_inicio = Child.value('../@fecha', 'date')
 
-
-
-
       /*
       Cargar asistencias en tabla auxiliar
        */
@@ -96,125 +93,61 @@ as begin
       FROM @XML.nodes('dataset/FechaOperacion/Asistencia') AS N (Child)
       WHERE @fecha_inicio = Child.value('../@Fecha', 'date')
 
-      UPDATE PLANILLA_MENSUAL
-      SET PLANILLA_MENSUAL.SALARIO_BRUTO = PLANILLA_MENSUAL.SALARIO_BRUTO + (@salarioPorHora * @horas)
-      FROM PLANILLA_MENSUAL PM
-      INNER JOIN ASISTENCIA A on PM.ID_OBRERO = A.ID_OBRERO
-
-      WHERE MES = MONTH(@viernesDePlanilla)
-        and ANNO = YEAR(@viernesDePlanilla)
-      IF @@ROWCOUNT = 0
-        INSERT INTO PLANILLA_MENSUAL ("ID_OBRERO", "SALARIO_BRUTO", "SALARIO_NETO", "MES", "ANNO")
-            OUTPUT @idPlanillaMensual = inserted.ID
-        values (@valorDocId, (@salarioPorHora * @horas), 0, MONTH(@viernesDePlanilla), YEAR(@viernesDePlanilla))
-
-      UPDATE PLANILLA_SEMANA
-      SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas)
-          OUTPUT @idPlanillaSemanal = inserted.ID
-      WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual
-        and FECHA = @sabadoDePlanilla
-      IF @@ROWCOUNT = 0
-        INSERT INTO PLANILLA_SEMANA (ID_PLANILLA_MENSUAL, "SALARIO_BRUTO", "SALARIO_NETO", FECHA)
-            OUTPUT @idPlanillaSemanal = inserted.ID
-        values (@valorDocId, (@salarioPorHora * @horas), 0, @sabadoDePlanilla)
 
 
+
+      -- Falta sumarle la cantidad de dinero ganada a la planilla, ahorita no se suma nada, solo se crea si no existe. Salarioxhora * horas
+      MERGE INTO PLANILLA_MENSUAL PM
+      USING (
+            SELECT A.ID_OBRERO as id,
+                   0 as sb,
+                   0 as sn,
+                   MONTH(@viernesDePlanilla) as mo,
+                   YEAR(@viernesDePlanilla) as ye
+            from ASISTENCIA A where FECHA=@fecha_inicio) AS reg
+      ON (PM.MES = reg.mo
+        and PM.ANNO = reg.ye
+        and PM.ID_OBRERO = reg.id)
+      --WHEN MATCHED THEN
+      --  UPDATE SET nombre = reg.nombre, activo = reg.activo
+      WHEN NOT MATCHED THEN
+        INSERT (ID_OBRERO, SALARIO_BRUTO, SALARIO_NETO, MES, ANNO)
+        VALUES (reg.id, reg.sb, reg.sn, reg.mo, reg.ye); -- OJO: Este punto y coma me lo pide por fuerza. No deberia ser necesario, pero mejor prevenir que lamentar
+
+
+      MERGE INTO PLANILLA_SEMANA PS
+      USING (
+            SELECT PM.ID as id,
+                   0 as sb,
+                   0 as sn,
+                   @sabadoDePlanilla as sa
+            from ASISTENCIA A
+            inner join PLANILLA_MENSUAL PM on (PM.ID_OBRERO=A.ID_OBRERO) where FECHA=@fecha_inicio and PM.MES = MONTH(@viernesDePlanilla) and PM.ANNO = YEAR(@viernesDePlanilla)) AS reg
+      ON (PS.ID_PLANILLA_MENSUAL= reg.id
+        and PS.FECHA = reg.sa)
+      --WHEN MATCHED THEN
+      --  UPDATE SET nombre = reg.nombre, activo = reg.activo
+      WHEN NOT MATCHED THEN
+        INSERT (ID_PLANILLA_MENSUAL, SALARIO_BRUTO, SALARIO_NETO, FECHA)
+        VALUES (reg.id, reg.sb, reg.sn, reg.sa);
+
+      --Movimiento de las horas normales de trabajo
       INSERT INTO MOVIMIENTO ("ID_PLANILLA_SEMANAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
-      SELECT @fecha_inicio,
-             Child.value('(@DocID)[1]', 'numeric(12)'),
-             Child.value('(@idTipoJornada)[1]', 'int'),
-             Child.value('(@HoraEntrada)[1]', 'time'),
-             Child.value('(@HoraSalida)[1]', 'time')
-      FROM @XML.nodes('dataset/FechaOperacion/Asistencia') AS N (Child)
-      WHERE @fecha_inicio = Child.value('../@Fecha', 'date')
+      SELECT S2.ID,--Aqui hace falta el id de la plantilla semanal
+              A.ID_OBRERO,
+             A.FECHA,
+             CASE
+                 WHEN datediff(hour, A.HORA_ENTRADA, A.HORA_SALIDA) < 0 then 24 - datediff(hour, A.HORA_ENTRADA, A.HORA_SALIDA),
+                 ELSE datediff(hour, A.HORA_ENTRADA, A.HORA_SALIDA)
+             END, 1
+      FROM ASISTENCIA A
+      INNER JOIN OBRERO O2 on A.ID_OBRERO = O2.ID
+      INNER JOIN SALARIOXHORA SH on (SH.ID_TIPO_JORNADA =  A.ID_TIPO_JORNADA and SH.ID_PUESTO = O2.ID_PUESTO)
+      inner join PLANILLA_MENSUAL MENSUAL3 on A.ID_OBRERO = MENSUAL3.ID_OBRERO
+      inner join PLANILLA_SEMANA S2 on MENSUAL3.ID = S2.ID_PLANILLA_MENSUAL
+      WHERE A.FECHA=@fecha_inicio and S2.FECHA = @sabadoDePlanilla
 
-
-
-      /*
-      Guardar asistencias en base de datos
-      Actualizar/crear planillas
-      Se agrega lo ganado y se registra como movimiento
-      Todo: Agregar ganancia por hora extra o por feriado
-
-       */
-      SELECT @low1 = min(sec), @high1 = max(sec) FROM @AsistenciaAux
-      WHILE @low1 <= @high1
-        BEGIN
-          SELECT @valorDocId = C.IdObrero,
-                 @idTipoJornada = C.IdTipoJornada,
-                 @horaEntrada = C.HoraEntrada,
-                 @horaSalida = C.HoraSalida
-          FROM @AsistenciaAux C
-          WHERE sec = @low1
-
-          SELECT @salarioPorHora = TC.SALARIO, @tiempoNormal = datediff(hour, J.HORA_INICIO, J.HORA_FIN)
-          FROM SALARIOXHORA TC
-                 Inner join TIPO_JORNADA J on TC.ID_TIPO_JORNADA = J.ID
-          WHERE TC.ID_TIPO_JORNADA = @idTipoJornada
-            and TC.ID_PUESTO = @valorDocId
-
-
-
-          set @horas = datediff(hour, @horaEntrada, @horaSalida)
-
-
-          IF (@horas < 0)
-            set @horas = 24 + @horas
-          IF (@tiempoNormal < 0)
-            set @tiempoNormal = 24 + @tiempoNormal
-
-          /*
-           * Agregar dinero ganado
-           ************* TODO: Agregar dinero ganado por horas extras
-           */
-          UPDATE PLANILLA_MENSUAL
-          SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas)
-              OUTPUT @idPlanillaMensual = inserted.ID
-          WHERE ID_OBRERO = @valorDocId
-            and MES = MONTH(@viernesDePlanilla)
-            and ANNO = YEAR(@viernesDePlanilla)
-          IF @@ROWCOUNT = 0
-            INSERT INTO PLANILLA_MENSUAL ("ID_OBRERO", "SALARIO_BRUTO", "SALARIO_NETO", "MES", "ANNO")
-                OUTPUT @idPlanillaMensual = inserted.ID
-            values (@valorDocId, (@salarioPorHora * @horas), 0, MONTH(@viernesDePlanilla), YEAR(@viernesDePlanilla))
-
-          UPDATE PLANILLA_SEMANA
-          SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas)
-              OUTPUT @idPlanillaSemanal = inserted.ID
-          WHERE ID_PLANILLA_MENSUAL = @idPlanillaMensual
-            and FECHA = @sabadoDePlanilla
-          IF @@ROWCOUNT = 0
-            INSERT INTO PLANILLA_SEMANA (ID_PLANILLA_MENSUAL, "SALARIO_BRUTO", "SALARIO_NETO", FECHA)
-                OUTPUT @idPlanillaSemanal = inserted.ID
-            values (@valorDocId, (@salarioPorHora * @horas), 0, @sabadoDePlanilla)
-
-          --Agregar movimiento
-          INSERT INTO MOVIMIENTO ("ID_PLANILLA_SEMANAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
-          VALUES (@idPlanillaSemanal,
-                  @valorDocId,
-                  @fecha_inicio,
-                  (@salarioPorHora * @horas),
-                  1) --3 porque es el valor del id de movimiento por incapacidad en la tabla respectiva
-
-          --Se agregan horas extras
-
-          Set @horas = @horas - @tiempoNormal
-          If (@horas > 0)
-            begin
-              Update PLANILLA_SEMANA
-              set SALARIO_NETO = SALARIO_NETO + (@horas * @salarioPorHora * 1.5)
-              where ID = @idPlanillaSemanal
-              INSERT INTO MOVIMIENTO ("ID_PLANILLA_SEMANAL", "ID_OBRERO", "FECHA", "MONTO", "TIPO_MOVIMIENTO")
-              VALUES (@idPlanillaSemanal,
-                      @valorDocId,
-                      @fecha_inicio,
-                      (@salarioPorHora * @horas * 1.5),
-                      2)
-
-            end
-          SET @low1 = @low1 + 1
-        END
-
+-------------Aqui termina lo hecho nuevo
 
       /*
        Cargar deducciones
