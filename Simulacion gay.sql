@@ -194,8 +194,8 @@ as begin
             end
 
 			--Agrega extra por feriado o si es domingo
-			Select count(Fecha) as @Feriado from Feriado where month(@fecha_inicio)=month(Fecha) and day(@fecha_inicio)=day(Fecha) or weekday(@fecha_inicio)='Sunday'
-			if(0<@Feriado)
+			Select count(Fecha) as @Feriado from Feriado where month(@fecha_inicio)=month(Fecha) and day(@fecha_inicio)=day(Fecha) or weekday(@fecha_inicio)=6
+			if(@Feriado > 0)
 			begin
 				UPDATE PLANILLA_SEMANA
 				SET SALARIO_BRUTO = SALARIO_BRUTO + (@salarioPorHora * @horas) --Se agrega el doble porque se trabaja el dia feriado
